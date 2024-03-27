@@ -13,6 +13,13 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - list
+  - watch
+- apiGroups:
   - eraser.sh
   resources:
   - imagejobs

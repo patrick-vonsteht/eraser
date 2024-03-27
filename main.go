@@ -40,6 +40,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
 	"github.com/eraser-dev/eraser/api/unversioned"
@@ -110,10 +111,8 @@ func main() {
 		LeaderElection:         false,
 		NewCache: cache.BuilderWithOptions(cache.Options{
 			SelectorsByObject: cache.SelectorsByObject{
-				// to watch eraser pods
-				&corev1.Pod{}: {
-					Field: fields.OneTermEqualSelector("metadata.namespace", utils.GetNamespace()),
-				},
+				// to watch Pods
+				&corev1.Pod{}: {},
 				// to watch eraser podTemplates
 				&corev1.PodTemplate{}: {
 					Field: fields.OneTermEqualSelector("metadata.namespace", utils.GetNamespace()),
@@ -195,6 +194,14 @@ func main() {
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
+
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Pod{}, "spec.nodeName", func(rawObj client.Object) []string {
+		pod := rawObj.(*corev1.Pod)
+		return []string{pod.Spec.NodeName}
+	}); err != nil {
+		setupLog.Error(err, "unable to set up field indexer for spec.nodeName")
 		os.Exit(1)
 	}
 

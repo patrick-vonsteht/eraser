@@ -24,6 +24,7 @@ import (
 	"golang.org/x/exp/slices"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
@@ -174,8 +175,8 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	return nil
 }
 
-func checkNodeFitness(pod *corev1.Pod, node *corev1.Node) bool {
-	nodeInfo := framework.NewNodeInfo()
+func checkNodeFitness(pod *corev1.Pod, node *corev1.Node, nodePods []*corev1.Pod) bool {
+	nodeInfo := framework.NewNodeInfo(nodePods...)
 	nodeInfo.SetNode(node)
 
 	insufficientResource := noderesources.Fits(pod, nodeInfo)
@@ -192,6 +193,7 @@ func checkNodeFitness(pod *corev1.Pod, node *corev1.Node) bool {
 //+kubebuilder:rbac:groups="",namespace="system",resources=podtemplates,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=eraser.sh,resources=imagejobs/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups="",namespace="system",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=pods,verbs=list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -415,7 +417,24 @@ func (r *Reconciler) handleNewJob(ctx context.Context, imageJob *eraserv1.ImageJ
 			pod.Labels = map[string]string{imageJobTypeLabelKey: collectorJobType}
 		}
 
-		fitness := checkNodeFitness(pod, &nodeList[i])
+		listOpts := client.ListOptions{
+			FieldSelector: fields.SelectorFromSet(fields.Set{"spec.nodeName": nodeName}),
+		}
+
+		nodePods := &corev1.PodList{}
+		err = r.List(ctx, nodePods, &listOpts)
+		if err != nil {
+			return err
+		}
+
+		nonTerminatedNodePods := []*corev1.Pod{}
+		for i := range nodePods.Items {
+			if nodePods.Items[i].Status.Phase != corev1.PodSucceeded && nodePods.Items[i].Status.Phase != corev1.PodFailed {
+				nonTerminatedNodePods = append(nonTerminatedNodePods, &nodePods.Items[i])
+			}
+		}
+
+		fitness := checkNodeFitness(pod, &nodeList[i], nonTerminatedNodePods)
 		if !fitness {
 			log.Info(containerName + " pod does not fit on node, skipping")
 			continue
